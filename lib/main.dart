@@ -26,7 +26,6 @@ Future<void> main() async {
 class MLKitModelManagerService {
   final _manager = OnDeviceTranslatorModelManager();
 
-  /// Download English, Hindi, and Kannada models if not already available.
   Future<void> ensureIndicModelsDownloaded() async {
     final requiredModels = [
       TranslateLanguage.english.bcpCode,
@@ -192,8 +191,37 @@ class GoogleApiTranslatorRepository implements TranslatorRepository {
   }
 }
 
-/// Android/iOS: Google ML Kit on-device translator (offline after model download).
-/// NOTE: Ensure google_mlkit_translation is added in pubspec.
+class LibreTranslateRepository implements TranslatorRepository {
+  LibreTranslateRepository();
+
+  @override
+  Future<String> translate(String text, String source, String target) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return '';
+
+    final uri = Uri.parse('http://localhost:5000/translate');
+    final response = await http.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'q': trimmed,
+        'source': source,
+        'target': target,
+        'format': 'text',
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final body = json.decode(response.body);
+      return body['translatedText'] ?? '';
+    } else {
+      throw Exception(
+        'LibreTranslate failed: ${response.statusCode} - ${response.body}',
+      );
+    }
+  }
+}
+
 class MlKitTranslatorRepository implements TranslatorRepository {
   // lazy map to ML Kit languages to avoid importing all at top
   static final Map<String, Object> _langMap = {
@@ -325,11 +353,11 @@ class TranslatorBloc extends Bloc<TranslatorEvent, TranslatorState> {
   TranslatorBloc() : super(const TranslatorState()) {
     // Decide repo per platform
     if (kIsWeb) {
-      _translator = GoogleApiTranslatorRepository();
+      _translator = LibreTranslateRepository();
     } else if (uio.Platform.isAndroid || uio.Platform.isIOS) {
       _translator = MlKitTranslatorRepository();
     } else {
-      _translator = GoogleApiTranslatorRepository(); // fallback
+      _translator = LibreTranslateRepository();
     }
 
     // 🟢 Set natural voice parameters
@@ -491,19 +519,50 @@ class _TranslatorPageState extends State<TranslatorPage>
         title: const Text('Lenskart Lens Companion'),
         backgroundColor: Colors.transparent,
         actions: [
-          if (kIsWeb)
-            Padding(
-              padding: const EdgeInsets.only(right: 16.0),
-              child: Opacity(
-                opacity: 0.75,
-                child: Center(
-                  child: Text(
-                    'AI Live Translator Prototype',
-                    style: Theme.of(context).textTheme.labelLarge,
+          if (kIsWeb) ...[
+            IconButton(
+              icon: Icon(Icons.info_outline, color: Colors.white70, size: 22),
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (_) => Dialog(
+                    backgroundColor: Colors.black.withOpacity(0.4),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "About Lenskart Lens Companion",
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                "An AI-powered live translator prototype for smart eyewear.\n\n"
+                                "🎧 Listens to speech • 🔤 Translates in real time • 🔊 Speaks back instantly.\n\n"
+                                "Built using Flutter, Google ML Kit, and Web Speech APIs — designed to explore how AR lenses could deliver HUD translations in real-world scenarios.",
+                                style: Theme.of(context).textTheme.bodyMedium!
+                                    .copyWith(
+                                      height: 1.4,
+                                      color: Colors.white.withOpacity(0.85),
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
+          ],
         ],
       ),
       body: Stack(

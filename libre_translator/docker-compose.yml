@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: libretranslate_local
+    ports:
+      - "5000:5000"
+    environment:
+      LT_LOAD_ONLY: "en,hi"
+      LT_DEBUG: "1"
+    restart: unless-stopped
