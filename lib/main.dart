@@ -1,17 +1,50 @@
 import 'dart:async';
-import 'dart:math';
+import 'dart:convert';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:universal_io/io.dart' as uio;
+import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 
-void main() {
+// ===== APP ROOT =============================================================
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb && (uio.Platform.isAndroid || uio.Platform.isIOS)) {
+    final modelManager = MLKitModelManagerService();
+    await modelManager.ensureIndicModelsDownloaded();
+  }
   runApp(const LenskartLensCompanionApp());
+}
+
+class MLKitModelManagerService {
+  final _manager = OnDeviceTranslatorModelManager();
+
+  /// Download English, Hindi, and Kannada models if not already available.
+  Future<void> ensureIndicModelsDownloaded() async {
+    final requiredModels = [
+      TranslateLanguage.english.bcpCode,
+      TranslateLanguage.hindi.bcpCode,
+      TranslateLanguage.kannada.bcpCode,
+    ];
+
+    for (final code in requiredModels) {
+      final already = await _manager.isModelDownloaded(code);
+      if (!already) {
+        debugPrint('📥 Downloading model: $code ...');
+        await _manager.downloadModel(code);
+        debugPrint('✅ Model downloaded: $code');
+      } else {
+        debugPrint('✅ Model already exists: $code');
+      }
+    }
+  }
 }
 
 class LenskartLensCompanionApp extends StatelessWidget {
@@ -31,11 +64,13 @@ class LenskartLensCompanionApp extends StatelessWidget {
   }
 }
 
+// ===== THEME ================================================================
+
 ThemeData buildDarkHudTheme() {
   final base = ThemeData.dark(useMaterial3: true);
 
-  final colorScheme = const ColorScheme.dark(
-    primary: Color(0xFF0BD3BF), // teal glow
+  const colorScheme = ColorScheme.dark(
+    primary: Color(0xFF0BD3BF),
     secondary: Color(0xFF58FCEC),
     surface: Color(0xFF0E1116),
     onSurface: Color(0xFFE6F2F1),
@@ -52,16 +87,12 @@ ThemeData buildDarkHudTheme() {
       backgroundColor: const Color(0xFF0A0D12).withOpacity(0.2),
       elevation: 0,
       scrolledUnderElevation: 0,
-      centerTitle: false,
+      centerTitle: true,
       titleTextStyle: GoogleFonts.inter(
         fontSize: 18,
         fontWeight: FontWeight.w600,
         color: colorScheme.onSurface,
         letterSpacing: 0.4,
-      ),
-      toolbarTextStyle: GoogleFonts.inter(
-        fontSize: 12,
-        color: colorScheme.onSurface.withOpacity(0.75),
       ),
     ),
     cardTheme: CardThemeData(
@@ -95,26 +126,146 @@ ThemeData buildDarkHudTheme() {
   );
 }
 
-enum LanguagePair { enFr, frEn }
+// ===== LANGS & TRANSLATION ABSTRACTION =====================================
 
-extension on LanguagePair {
+/// Indian-language focused pairs:
+/// EN↔HI and EN↔KN (four directions).
+enum LanguagePair { enHi, hiEn, enKn, knEn }
+
+extension PairMeta on LanguagePair {
   String get label => switch (this) {
-    LanguagePair.enFr => 'EN ↔ FR',
-    LanguagePair.frEn => 'FR ↔ EN',
+    LanguagePair.enHi => 'EN ↔ HI',
+    LanguagePair.hiEn => 'HI ↔ EN',
+    LanguagePair.enKn => 'EN ↔ KN',
+    LanguagePair.knEn => 'KN ↔ EN',
   };
 
   String get source => switch (this) {
-    LanguagePair.enFr => 'EN',
-    LanguagePair.frEn => 'FR',
+    LanguagePair.enHi => 'EN',
+    LanguagePair.hiEn => 'HI',
+    LanguagePair.enKn => 'EN',
+    LanguagePair.knEn => 'KN',
   };
 
   String get target => switch (this) {
-    LanguagePair.enFr => 'FR',
-    LanguagePair.frEn => 'EN',
+    LanguagePair.enHi => 'HI',
+    LanguagePair.hiEn => 'EN',
+    LanguagePair.enKn => 'KN',
+    LanguagePair.knEn => 'EN',
+  };
+
+  String get sourceCode => source.toLowerCase();
+  String get targetCode => target.toLowerCase();
+
+  /// Locale IDs for speech_to_text
+  String get sourceLocale => switch (sourceCode) {
+    'en' => 'en_US',
+    'hi' => 'hi_IN',
+    'kn' => 'kn_IN',
+    _ => 'en_US',
   };
 }
 
-// ------- Events
+abstract class TranslatorRepository {
+  Future<String> translate(String text, String fromCode, String toCode);
+}
+
+/// Web: Google public translate endpoint (demo only; no API key).
+class GoogleApiTranslatorRepository implements TranslatorRepository {
+  @override
+  Future<String> translate(String text, String from, String to) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return '';
+    final uri = Uri.parse(
+      'https://translate.googleapis.com/translate_a/single?client=gtx&sl=$from&tl=$to&dt=t&q=${Uri.encodeComponent(trimmed)}',
+    );
+    final res = await http.get(uri);
+    if (res.statusCode == 200) {
+      final body = json.decode(res.body);
+      // body[0] is a list of segments; join them
+      final segments = (body[0] as List)
+          .map((seg) => (seg as List).isNotEmpty ? seg[0] as String : '')
+          .join();
+      return segments;
+    }
+    return 'Translation failed (${res.statusCode})';
+  }
+}
+
+/// Android/iOS: Google ML Kit on-device translator (offline after model download).
+/// NOTE: Ensure google_mlkit_translation is added in pubspec.
+class MlKitTranslatorRepository implements TranslatorRepository {
+  // lazy map to ML Kit languages to avoid importing all at top
+  static final Map<String, Object> _langMap = {
+    'en': TranslateLanguage.english,
+    'hi': TranslateLanguage.hindi,
+    'kn': TranslateLanguage.kannada,
+  };
+
+  @override
+  Future<String> translate(String text, String from, String to) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return '';
+    final src = _langMap[from] as TranslateLanguage?;
+    final dst = _langMap[to] as TranslateLanguage?;
+    if (src == null || dst == null) return trimmed;
+
+    final translator = OnDeviceTranslator(
+      sourceLanguage: src,
+      targetLanguage: dst,
+    );
+    try {
+      final out = await translator.translateText(trimmed);
+      return out;
+    } finally {
+      await translator.close();
+    }
+  }
+}
+
+// ===== SPEECH SERVICE =======================================================
+
+class SpeechService {
+  final stt.SpeechToText _speech = stt.SpeechToText();
+
+  Future<String> listenOnce({required String localeId}) async {
+    // Initialize also handles mic permission prompts on mobile.
+    final available = await _speech.initialize();
+    if (!available) return '';
+
+    String captured = '';
+    final completer = Completer<String>();
+
+    _speech.listen(
+      localeId: localeId,
+      onResult: (result) {
+        captured = result.recognizedWords;
+        if (result.finalResult) {
+          completer.complete(captured);
+          _speech.stop();
+        }
+      },
+      listenFor: const Duration(seconds: 15),
+      pauseFor: const Duration(seconds: 5),
+      cancelOnError: true,
+      partialResults: true,
+    );
+
+    // Safety timeout
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        _speech.stop();
+        return captured;
+      },
+    );
+  }
+}
+
+// ===== BLOC =================================================================
+
+// ===== BLOC =================================================================
+
 abstract class TranslatorEvent {}
 
 class StartListeningPressed extends TranslatorEvent {}
@@ -127,7 +278,9 @@ class DismissOverlayPressed extends TranslatorEvent {}
 
 class ToggleSpeakPressed extends TranslatorEvent {}
 
-// ------- State
+/// internal event triggered when TTS playback completes
+class _TtsCompleted extends TranslatorEvent {}
+
 class TranslatorState {
   final LanguagePair pair;
   final String sourceText;
@@ -137,7 +290,7 @@ class TranslatorState {
   final bool isListening;
 
   const TranslatorState({
-    this.pair = LanguagePair.enFr,
+    this.pair = LanguagePair.enHi,
     this.sourceText = '',
     this.translatedText = '',
     this.overlayVisible = false,
@@ -152,82 +305,66 @@ class TranslatorState {
     bool? overlayVisible,
     bool? speaking,
     bool? isListening,
-  }) => TranslatorState(
-    pair: pair ?? this.pair,
-    sourceText: sourceText ?? this.sourceText,
-    translatedText: translatedText ?? this.translatedText,
-    overlayVisible: overlayVisible ?? this.overlayVisible,
-    speaking: speaking ?? this.speaking,
-    isListening: isListening ?? this.isListening,
-  );
-}
-
-// ------- Mock translator
-class _MockTranslatorService {
-  final _rng = Random();
-
-  final _frSamples = <String>[
-    'Bonjour tout le monde',
-    'Où est la station de métro ?',
-    'Combien ça coûte ?',
-    'Je cherche des lunettes',
-    'Merci beaucoup',
-  ];
-
-  final _enSamples = <String>[
-    'Hello everyone',
-    'Where is the metro station?',
-    'How much does it cost?',
-    'I am looking for glasses',
-    'Thank you very much',
-  ];
-
-  Future<(String source, String translated)> listenAndTranslate(
-    LanguagePair pair,
-  ) async {
-    await Future<void>.delayed(const Duration(milliseconds: 650));
-    if (pair == LanguagePair.enFr) {
-      final en = _enSamples[_rng.nextInt(_enSamples.length)];
-      final frMap = {
-        'Hello everyone': 'Bonjour tout le monde',
-        'Where is the metro station?': 'Où est la station de métro ?',
-        'How much does it cost?': 'Combien ça coûte ?',
-        'I am looking for glasses': 'Je cherche des lunettes',
-        'Thank you very much': 'Merci beaucoup',
-      };
-      return (en, frMap[en]!);
-    } else {
-      final fr = _frSamples[_rng.nextInt(_frSamples.length)];
-      final enMap = {
-        'Bonjour tout le monde': 'Hello everyone',
-        'Où est la station de métro ?': 'Where is the metro station?',
-        'Combien ça coûte ?': 'How much does it cost?',
-        'Je cherche des lunettes': 'I am looking for glasses',
-        'Merci beaucoup': 'Thank you very much',
-      };
-      return (fr, enMap[fr]!);
-    }
+  }) {
+    return TranslatorState(
+      pair: pair ?? this.pair,
+      sourceText: sourceText ?? this.sourceText,
+      translatedText: translatedText ?? this.translatedText,
+      overlayVisible: overlayVisible ?? this.overlayVisible,
+      speaking: speaking ?? this.speaking,
+      isListening: isListening ?? this.isListening,
+    );
   }
 }
 
 class TranslatorBloc extends Bloc<TranslatorEvent, TranslatorState> {
-  final _MockTranslatorService _service = _MockTranslatorService();
+  late final TranslatorRepository _translator;
+  final SpeechService _speech = SpeechService();
+  final FlutterTts _tts = FlutterTts();
 
   TranslatorBloc() : super(const TranslatorState()) {
+    // Decide repo per platform
+    if (kIsWeb) {
+      _translator = GoogleApiTranslatorRepository();
+    } else if (uio.Platform.isAndroid || uio.Platform.isIOS) {
+      _translator = MlKitTranslatorRepository();
+    } else {
+      _translator = GoogleApiTranslatorRepository(); // fallback
+    }
+
+    // 🟢 Set natural voice parameters
+    _tts.setSpeechRate(0.6);
+    _tts.setVolume(0.9);
+    _tts.setPitch(1.0);
+
+    // 🟢 Handle TTS completion and stop events properly
+    _tts.setCompletionHandler(() {
+      add(_TtsCompleted());
+    });
+    _tts.setCancelHandler(() {
+      add(_TtsCompleted());
+    });
+
+    // 🎯 Event registrations
     on<SwitchLanguagePressed>(_onSwitch);
     on<StartListeningPressed>(_onListen);
     on<ViewTranslationPressed>(_onView);
     on<DismissOverlayPressed>(_onDismiss);
     on<ToggleSpeakPressed>(_onToggleSpeak);
+    on<_TtsCompleted>(_onTtsCompleted);
   }
 
   FutureOr<void> _onSwitch(
     SwitchLanguagePressed event,
     Emitter<TranslatorState> emit,
   ) {
-    final next = state.pair == LanguagePair.enFr
-        ? LanguagePair.frEn
-        : LanguagePair.enFr;
+    // Cycle through four directions (EN↔HI, EN↔KN)
+    final next = switch (state.pair) {
+      LanguagePair.enHi => LanguagePair.hiEn,
+      LanguagePair.hiEn => LanguagePair.enKn,
+      LanguagePair.enKn => LanguagePair.knEn,
+      LanguagePair.knEn => LanguagePair.enHi,
+    };
     emit(state.copyWith(pair: next));
   }
 
@@ -238,10 +375,22 @@ class TranslatorBloc extends Bloc<TranslatorEvent, TranslatorState> {
     emit(
       state.copyWith(isListening: true, overlayVisible: false, speaking: false),
     );
-    final (src, tr) = await _service.listenAndTranslate(state.pair);
-    emit(
-      state.copyWith(sourceText: src, translatedText: tr, isListening: false),
+
+    // 1️⃣ Listen from mic
+    final heard = await _speech.listenOnce(localeId: state.pair.sourceLocale);
+
+    // 2️⃣ Update source text
+    emit(state.copyWith(sourceText: heard, isListening: false));
+
+    // 3️⃣ Translate (if text found)
+    if (heard.trim().isEmpty) return;
+    final translated = await _translator.translate(
+      heard,
+      state.pair.sourceCode,
+      state.pair.targetCode,
     );
+
+    emit(state.copyWith(translatedText: translated));
   }
 
   FutureOr<void> _onView(
@@ -256,15 +405,35 @@ class TranslatorBloc extends Bloc<TranslatorEvent, TranslatorState> {
     Emitter<TranslatorState> emit,
   ) {
     emit(state.copyWith(overlayVisible: false, speaking: false));
+    _tts.stop();
   }
 
-  FutureOr<void> _onToggleSpeak(
+  Future<void> _onToggleSpeak(
     ToggleSpeakPressed event,
     Emitter<TranslatorState> emit,
+  ) async {
+    if (state.translatedText.isEmpty) return;
+
+    if (state.speaking) {
+      // Stop if currently speaking
+      await _tts.stop();
+      emit(state.copyWith(speaking: false));
+    } else {
+      // Start playback and mark speaking
+      emit(state.copyWith(speaking: true));
+      await _tts.speak(state.translatedText);
+    }
+  }
+
+  FutureOr<void> _onTtsCompleted(
+    _TtsCompleted event,
+    Emitter<TranslatorState> emit,
   ) {
-    emit(state.copyWith(speaking: !state.speaking));
+    emit(state.copyWith(speaking: false));
   }
 }
+
+// ===== UI ===================================================================
 
 class TranslatorPage extends StatefulWidget {
   const TranslatorPage({super.key});
@@ -291,10 +460,10 @@ class _TranslatorPageState extends State<TranslatorPage>
 
     _tts = FlutterTts();
     // TTS can be flaky on some desktop builds; guard lightly.
-    // If it fails, we silently disable voice feedback.
     if (!uio.Platform.isLinux) {
-      _tts.setSpeechRate(0.95);
+      _tts.setSpeechRate(0.6);
       _tts.setVolume(0.9);
+      _tts.setPitch(1.0);
       _ttsAvailable = true;
     }
   }
@@ -320,7 +489,7 @@ class _TranslatorPageState extends State<TranslatorPage>
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Lenskart Lens Companion'),
-        centerTitle: true,
+        backgroundColor: Colors.transparent,
         actions: [
           if (kIsWeb)
             Padding(
@@ -336,7 +505,6 @@ class _TranslatorPageState extends State<TranslatorPage>
               ),
             ),
         ],
-        backgroundColor: Colors.transparent,
       ),
       body: Stack(
         children: [
@@ -352,7 +520,6 @@ class _TranslatorPageState extends State<TranslatorPage>
             ),
           ),
           const _OverlayCard(),
-          // Footer credit
           Positioned(
             bottom: 25,
             left: 0,
@@ -374,12 +541,13 @@ class _TranslatorPageState extends State<TranslatorPage>
 }
 
 class _ControlPanel extends StatelessWidget {
-  final Future<void> Function(String text) onSpeak;
   const _ControlPanel({required this.onSpeak});
+
+  final Future<void> Function(String text) onSpeak;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final state = context.watch<TranslatorBloc>().state;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20.0),
@@ -388,62 +556,36 @@ class _ControlPanel extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 _Pill(text: 'HUD Mode'),
                 const SizedBox(width: 8),
-                _Pill(
-                  text: context.select(
-                    (TranslatorBloc b) => b.state.pair.label,
-                  ),
-                ),
-                const Spacer(),
-                Icon(Icons.remove_red_eye, size: 18, color: cs.secondary),
-                const SizedBox(width: 6),
-                Opacity(
-                  opacity: 0.7,
-                  child: Text(
-                    'Lens HUD Preview',
-                    style: Theme.of(context).textTheme.labelMedium,
-                  ),
-                ),
+                _Pill(text: state.pair.label),
               ],
             ),
             const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton.icon(
+                  child: ElevatedButton(
                     onPressed: () {
                       context.read<TranslatorBloc>().add(
                         StartListeningPressed(),
                       );
                     },
-                    icon: const Text('🎙'),
-                    label: const Text('Start Listening'),
+                    child: const Text('Start Listening'),
                   ),
                 ),
+
                 const SizedBox(width: 12),
                 Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      context.read<TranslatorBloc>().add(
-                        SwitchLanguagePressed(),
-                      );
-                    },
-                    icon: const Text('🌐'),
-                    label: const Text('Switch Language'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
+                  child: ElevatedButton(
                     onPressed: () {
                       context.read<TranslatorBloc>().add(
                         ViewTranslationPressed(),
                       );
                     },
-                    icon: const Text('🪞'),
-                    label: const Text('View Translation'),
+                    child: const Text('View Translation'),
                   ),
                 ),
               ],
@@ -453,7 +595,18 @@ class _ControlPanel extends StatelessWidget {
             const SizedBox(height: 6),
             const _TextsRow(),
             const SizedBox(height: 10),
-            _VoiceBar(onSpeak: onSpeak),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _VoiceBar(onSpeak: onSpeak),
+                ElevatedButton(
+                  onPressed: () {
+                    context.read<TranslatorBloc>().add(SwitchLanguagePressed());
+                  },
+                  child: const Text('Switch Language'),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -498,8 +651,8 @@ class _ListeningStrip extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             isListening
-                ? 'Listening… capturing sample speech'
-                : 'Tap “Start Listening” to simulate speech capture',
+                ? 'Listening… capture speech'
+                : 'Tap “Start Listening” to speak',
             style: Theme.of(context).textTheme.labelLarge!.copyWith(
               color: Colors.white.withOpacity(0.8),
             ),

@@ -42,11 +42,11 @@ dependencies:
   google_mlkit_translation: ^0.13.0
   universal_io: ^2.2.2
 
-dependency_overrides:
-  google_mlkit_commons:
-    git:
-      url: https://github.com/bharat-biradar/Google-Ml-Kit-plugin.git
-      path: packages/google_mlkit_commons
+# dependency_overrides:
+#   google_mlkit_commons:
+#     git:
+#       url: https://github.com/bharat-biradar/Google-Ml-Kit-plugin.git
+#       path: packages/google_mlkit_commons
 
 dev_dependencies:
   flutter_test:

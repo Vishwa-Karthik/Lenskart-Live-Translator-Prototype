@@ -129,13 +129,12 @@ packages:
     source: hosted
     version: "6.3.2"
   google_mlkit_commons:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
-      path: "packages/google_mlkit_commons"
-      ref: HEAD
-      resolved-ref: f3397499e96eb9901f7d259a13fb1521b03d992f
-      url: "https://github.com/bharat-biradar/Google-Ml-Kit-plugin.git"
-    source: git
+      name: google_mlkit_commons
+      sha256: "8f40fbac10685cad4715d11e6a0d86837d9ad7168684dfcad29610282a88e67a"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.11.0"
   google_mlkit_translation:
     dependency: "direct main"
