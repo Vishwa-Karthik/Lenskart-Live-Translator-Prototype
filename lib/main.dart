@@ -1,18 +1,13 @@
-// pubspec.yaml dependencies:
-// flutter:
-//   sdk: flutter
-// flutter_bloc: ^8.1.3
-// google_fonts: ^6.1.0
-// flutter_tts: ^3.8.3
-// universal_io: ^2.2.2
-
 import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:universal_io/io.dart' as uio;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,14 +31,11 @@ class LenskartLensCompanionApp extends StatelessWidget {
   }
 }
 
-// =============================
-// THEME
-// =============================
-
 ThemeData buildDarkHudTheme() {
   final base = ThemeData.dark(useMaterial3: true);
+
   final colorScheme = const ColorScheme.dark(
-    primary: Color(0xFF0BD3BF),
+    primary: Color(0xFF0BD3BF), // teal glow
     secondary: Color(0xFF58FCEC),
     surface: Color(0xFF0E1116),
     onSurface: Color(0xFFE6F2F1),
@@ -103,10 +95,6 @@ ThemeData buildDarkHudTheme() {
   );
 }
 
-// =============================
-// BLOC
-// =============================
-
 enum LanguagePair { enFr, frEn }
 
 extension on LanguagePair {
@@ -126,6 +114,7 @@ extension on LanguagePair {
   };
 }
 
+// ------- Events
 abstract class TranslatorEvent {}
 
 class StartListeningPressed extends TranslatorEvent {}
@@ -138,6 +127,7 @@ class DismissOverlayPressed extends TranslatorEvent {}
 
 class ToggleSpeakPressed extends TranslatorEvent {}
 
+// ------- State
 class TranslatorState {
   final LanguagePair pair;
   final String sourceText;
@@ -172,6 +162,7 @@ class TranslatorState {
   );
 }
 
+// ------- Mock translator
 class _MockTranslatorService {
   final _rng = Random();
 
@@ -275,12 +266,53 @@ class TranslatorBloc extends Bloc<TranslatorEvent, TranslatorState> {
   }
 }
 
-// =============================
-// MAIN PAGE
-// =============================
-
-class TranslatorPage extends StatelessWidget {
+class TranslatorPage extends StatefulWidget {
   const TranslatorPage({super.key});
+
+  @override
+  State<TranslatorPage> createState() => _TranslatorPageState();
+}
+
+class _TranslatorPageState extends State<TranslatorPage>
+    with SingleTickerProviderStateMixin {
+  late final FlutterTts _tts;
+  bool _ttsAvailable = false;
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+      lowerBound: 0.9,
+      upperBound: 1.05,
+    )..repeat(reverse: true);
+
+    _tts = FlutterTts();
+    // TTS can be flaky on some desktop builds; guard lightly.
+    // If it fails, we silently disable voice feedback.
+    if (!uio.Platform.isLinux) {
+      _tts.setSpeechRate(0.95);
+      _tts.setVolume(0.9);
+      _ttsAvailable = true;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    _tts.stop();
+    super.dispose();
+  }
+
+  Future<void> _speakIfPossible(String text) async {
+    if (!_ttsAvailable) return;
+    try {
+      await _tts.stop();
+      await _tts.speak(text);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -290,36 +322,39 @@ class TranslatorPage extends StatelessWidget {
         title: const Text('Lenskart Lens Companion'),
         centerTitle: true,
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: Opacity(
-              opacity: 0.75,
-              child: Center(
-                child: Text(
-                  'AI Live Translator Prototype',
-                  style: Theme.of(context).textTheme.labelLarge,
+          if (kIsWeb)
+            Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: Opacity(
+                opacity: 0.75,
+                child: Center(
+                  child: Text(
+                    'AI Live Translator Prototype',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
                 ),
               ),
             ),
-          ),
         ],
         backgroundColor: Colors.transparent,
       ),
       body: Stack(
         children: [
           _LensGradientBackground(),
-          Center(
+          Align(
+            alignment: Alignment.center,
             child: Padding(
-              padding: const EdgeInsets.only(top: 80.0),
+              padding: const EdgeInsets.only(top: 88.0),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 980),
-                child: const _ControlPanel(),
+                child: _ControlPanel(onSpeak: _speakIfPossible),
               ),
             ),
           ),
           const _OverlayCard(),
+          // Footer credit
           Positioned(
-            bottom: 14,
+            bottom: 25,
             left: 0,
             right: 0,
             child: Center(
@@ -327,7 +362,7 @@ class TranslatorPage extends StatelessWidget {
                 opacity: 0.6,
                 child: Text(
                   'Concept Prototype by Vishwa Karthik - Built with Flutter',
-                  style: Theme.of(context).textTheme.labelMedium,
+                  style: Theme.of(context).textTheme.labelLarge,
                 ),
               ),
             ),
@@ -338,12 +373,9 @@ class TranslatorPage extends StatelessWidget {
   }
 }
 
-// =============================
-// CONTROL PANEL (CENTER CARD)
-// =============================
-
 class _ControlPanel extends StatelessWidget {
-  const _ControlPanel();
+  final Future<void> Function(String text) onSpeak;
+  const _ControlPanel({required this.onSpeak});
 
   @override
   Widget build(BuildContext context) {
@@ -355,7 +387,6 @@ class _ControlPanel extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Header pills
             Row(
               children: [
                 _Pill(text: 'HUD Mode'),
@@ -378,8 +409,6 @@ class _ControlPanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-
-            // Action buttons row
             Row(
               children: [
                 Expanded(
@@ -420,17 +449,11 @@ class _ControlPanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
-
-            // Listening strip
             const _ListeningStrip(),
             const SizedBox(height: 6),
-
-            // Source and Translation fields
             const _TextsRow(),
             const SizedBox(height: 10),
-
-            // Voice controls
-            const _VoiceBar(),
+            _VoiceBar(onSpeak: onSpeak),
           ],
         ),
       ),
@@ -440,7 +463,6 @@ class _ControlPanel extends StatelessWidget {
 
 class _ListeningStrip extends StatelessWidget {
   const _ListeningStrip();
-
   @override
   Widget build(BuildContext context) {
     final isListening = context.select(
@@ -477,7 +499,7 @@ class _ListeningStrip extends StatelessWidget {
           Text(
             isListening
                 ? 'Listening… capturing sample speech'
-                : 'Tap "Start Listening" to simulate speech capture',
+                : 'Tap “Start Listening” to simulate speech capture',
             style: Theme.of(context).textTheme.labelLarge!.copyWith(
               color: Colors.white.withOpacity(0.8),
             ),
@@ -490,7 +512,6 @@ class _ListeningStrip extends StatelessWidget {
 
 class _TextsRow extends StatelessWidget {
   const _TextsRow();
-
   @override
   Widget build(BuildContext context) {
     final state = context.watch<TranslatorBloc>().state;
@@ -519,7 +540,6 @@ class _GlassField extends StatelessWidget {
   final String title;
   final String text;
   const _GlassField({required this.title, required this.text});
-
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
@@ -559,7 +579,8 @@ class _GlassField extends StatelessWidget {
 }
 
 class _VoiceBar extends StatelessWidget {
-  const _VoiceBar();
+  final Future<void> Function(String) onSpeak;
+  const _VoiceBar({required this.onSpeak});
 
   @override
   Widget build(BuildContext context) {
@@ -570,8 +591,9 @@ class _VoiceBar extends StatelessWidget {
         ElevatedButton.icon(
           onPressed: state.translatedText.isEmpty
               ? null
-              : () {
+              : () async {
                   context.read<TranslatorBloc>().add(ToggleSpeakPressed());
+                  await onSpeak(state.translatedText);
                 },
           icon: Icon(state.speaking ? Icons.stop : Icons.volume_up, size: 18),
           label: Text(state.speaking ? 'Stop Voice' : 'Play Voice'),
@@ -585,7 +607,6 @@ class _VoiceBar extends StatelessWidget {
 
 class _WaveForm extends StatefulWidget {
   const _WaveForm();
-
   @override
   State<_WaveForm> createState() => _WaveFormState();
 }
@@ -645,13 +666,8 @@ class _WaveFormState extends State<_WaveForm>
   }
 }
 
-// =============================
-// OVERLAY CARD
-// =============================
-
 class _OverlayCard extends StatelessWidget {
   const _OverlayCard();
-
   @override
   Widget build(BuildContext context) {
     final state = context.watch<TranslatorBloc>().state;
@@ -661,88 +677,81 @@ class _OverlayCard extends StatelessWidget {
       child: AnimatedOpacity(
         opacity: state.overlayVisible ? 1 : 0,
         duration: const Duration(milliseconds: 260),
-        child: Container(
-          color: Colors.black.withOpacity(state.overlayVisible ? 0.7 : 0),
-          child: Center(
-            child: GestureDetector(
-              onTap: () =>
-                  context.read<TranslatorBloc>().add(DismissOverlayPressed()),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(28),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                  child: Container(
-                    constraints: const BoxConstraints(maxWidth: 720),
-                    margin: const EdgeInsets.symmetric(horizontal: 32),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 28,
-                      vertical: 26,
-                    ),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(28),
-                      color: const Color(0xFF0E141B).withOpacity(0.4),
-                      border: Border.all(color: Colors.white.withOpacity(0.12)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withOpacity(0.28),
-                          blurRadius: 24,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.translate,
-                              size: 18,
-                              color: Theme.of(context).colorScheme.secondary,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Translation Overlay',
-                              style: Theme.of(context).textTheme.titleMedium!
-                                  .copyWith(fontWeight: FontWeight.w700),
-                            ),
-                            const Spacer(),
-                            Opacity(
-                              opacity: 0.7,
-                              child: Text(
-                                state.pair.label,
-                                style: Theme.of(context).textTheme.labelLarge,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Divider(
-                          color: Colors.white.withOpacity(0.08),
-                          height: 1,
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          state.translatedText.isEmpty
-                              ? '—'
-                              : state.translatedText,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.headlineSmall!.copyWith(height: 1.15),
-                        ),
-                        const SizedBox(height: 10),
-                        Opacity(
-                          opacity: 0.7,
-                          child: Text(
-                            'Tap anywhere to dismiss',
-                            style: Theme.of(context).textTheme.labelMedium,
+        child: Center(
+          child: GestureDetector(
+            onTap: () =>
+                context.read<TranslatorBloc>().add(DismissOverlayPressed()),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 28,
+                    vertical: 26,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(28),
+                    color: const Color(0xFF0E141B).withOpacity(0.4),
+                    border: Border.all(color: Colors.white.withOpacity(0.12)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withOpacity(0.28),
+                        blurRadius: 24,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.translate,
+                            size: 18,
+                            color: Theme.of(context).colorScheme.secondary,
                           ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Translation Overlay',
+                            style: Theme.of(context).textTheme.titleMedium!
+                                .copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const Spacer(),
+                          Opacity(
+                            opacity: 0.7,
+                            child: Text(
+                              state.pair.label,
+                              style: Theme.of(context).textTheme.labelLarge,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Divider(color: Colors.white.withOpacity(0.08), height: 1),
+                      const SizedBox(height: 14),
+                      Text(
+                        state.translatedText.isEmpty
+                            ? '—'
+                            : state.translatedText,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.headlineSmall!.copyWith(height: 1.15),
+                      ),
+                      const SizedBox(height: 10),
+                      Opacity(
+                        opacity: 0.7,
+                        child: Text(
+                          'Tap here to dismiss',
+                          style: Theme.of(context).textTheme.labelMedium,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -753,10 +762,6 @@ class _OverlayCard extends StatelessWidget {
     );
   }
 }
-
-// =============================
-// BACKGROUND
-// =============================
 
 class _LensGradientBackground extends StatelessWidget {
   @override
@@ -795,14 +800,9 @@ class _LensGradientBackground extends StatelessWidget {
   }
 }
 
-// =============================
-// PILL WIDGET
-// =============================
-
 class _Pill extends StatelessWidget {
   final String text;
   const _Pill({required this.text});
-
   @override
   Widget build(BuildContext context) {
     return Container(
