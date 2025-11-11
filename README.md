@@ -1,16 +1,36 @@
-# lenskart_lens_companion
+# 🔍 Lenskart Lens Companion
 
-A new Flutter project.
+A live translator prototype designed for smart eyewear HUD (Heads-Up Display) systems. Listen to speech, get instant translations, and hear them spoken back — all in real-time.
 
-## Getting Started
+## ✨ Features
 
-This project is a starting point for a Flutter application.
+- **Live Speech Recognition** — Captures audio input and transcribes it instantly
+- **Real-time Translation** — Translates between English, Hindi, and Kannada
+- **Text-to-Speech** — Speaks translations back to the user with natural voice
+- **Smart Model Loading** — On mobile, uses local Google ML Kit models; on web, uses cloud APIs for simplicity
+- **Beautiful HUD UI** — Glassmorphic dark theme with gradient overlays, perfect for wearable concepts
+- **Language Switching** — Easy toggle between language pairs
+- **Translation Overlay** — Full-screen modal showing the translated text
 
-A few resources to get you started if this is your first Flutter project:
+## 🛠️ How It Works
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+### Translation Architecture
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+**On Mobile (Android/iOS):**
+- Downloads translation models locally using Google ML Kit (first launch)
+- Processes all translations offline for privacy and speed
+- Models are cached for future use
+
+**On Web:**
+- Uses cloud-based translation APIs via HTTP
+- No local model storage needed
+- Simpler setup for browser-based prototyping
+
+## 📝 Notes
+
+This is a **prototype/proof-of-concept** for demonstrating live translation on smart eyewear. The UI concept explores HUD-style interfaces with glassmorphic design patterns commonly used in AR applications.
+
+## 👨‍💻 Developer
+
+**Built by:** Vishwa Karthik  
+**Purpose:** Concept prototype exploring Smart-powered translation for wearable devices
