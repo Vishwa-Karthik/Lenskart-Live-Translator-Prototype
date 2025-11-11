@@ -1,3 +1,5 @@
+import 'dart:developer' show log;
+
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 
 class MLKitModelManagerService {
@@ -16,15 +18,12 @@ class MLKitModelManagerService {
       final already = await _manager.isModelDownloaded(code);
       if (!already) {
         onProgress?.call('📥 Downloading $languageName model...');
-        // ignore: avoid_print
-        print('📥 Downloading model: $code ...');
+        log(' Downloading model: $code ...');
         await _manager.downloadModel(code);
-        // ignore: avoid_print
-        print('✅ Model downloaded: $code');
+        log(' Model downloaded: $code');
       } else {
         onProgress?.call('✅ $languageName model ready');
-        // ignore: avoid_print
-        print('✅ Model already exists: $code');
+        log(' Model already exists: $code');
       }
     }
   }
