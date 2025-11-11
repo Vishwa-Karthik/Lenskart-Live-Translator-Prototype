@@ -36,7 +36,7 @@ class LibreTranslateRepository implements TranslatorRepository {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return '';
 
-    final uri = Uri.parse('http://localhost:5000/translate');
+    final uri = Uri.parse('https://lenskart-live-translator-prototype.onrender.com/translate');
     final response = await http.post(
       uri,
       headers: {'Content-Type': 'application/json'},
