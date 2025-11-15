@@ -3,20 +3,12 @@ version: "3.8"
 services:
   libretranslate:
     build: .
-    container_name: libretranslate_prod
+    container_name: libretranslate
     ports:
       - "5000:5000"
     environment:
-      LT_LOAD_ONLY: "en,hi"
-      LT_DEBUG: "0"
-      LT_THREADS: "2"
-      LT_SHARED_STORAGE: "/data"
-    volumes:
-      - ./data:/data # cache models to avoid re-downloads
+      PORT: 5000
+      LT_HOST: 0.0.0.0
+      LT_PORT: 5000
+      LT_LOAD_ONLY: "en,kn,hi"
     restart: unless-stopped
-    healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://127.0.0.1:5000/languages >/dev/null || exit 1" ]
-      interval: 30s
-      timeout: 5s
-      start_period: 40s
-      retries: 5

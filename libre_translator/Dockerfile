@@ -1,33 +1,19 @@
-# ============================
-# LibreTranslate - Production Dockerfile (Render + Local)
-# ============================
+# Use official LibreTranslate base image
 FROM libretranslate/libretranslate:latest
 
-# Switch temporarily to root to install curl for healthchecks
-USER root
+# Railway will set PORT env variable. Default to 5000 locally.
+ENV PORT=5000
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+# Ensure the server binds correctly on Railway (0.0.0.0)
+ENV LT_PORT=${PORT}
+ENV LT_HOST=0.0.0.0
 
-# Expose default API port
-EXPOSE 5000
+# Optional tuning (safe defaults)
+ENV LT_UPDATE_MODELS=true
+ENV LT_LOAD_ONLY=en,es,fr,hi
 
-# Create a writable home directory for the non-root user
-RUN mkdir -p /home/libretranslate && chown -R 1000:1000 /home/libretranslate
+# Expose the dynamic port (Railway auto-detects)
+EXPOSE ${PORT}
 
-# Set environment variables
-ENV HOME=/home/libretranslate
-ENV LT_SHARED_STORAGE=/data
-ENV LT_LOAD_ONLY="en,hi"
-ENV LT_THREADS="2"
-
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=5 \
-    CMD curl -fsS "http://127.0.0.1:${PORT:-5000}/languages" >/dev/null || exit 1
-
-# Drop back to non-root for security
-USER 1000
-
-# Start LibreTranslate (bind to Render’s $PORT or fallback to 5000)
-CMD ["bash", "-lc", "libretranslate --host 0.0.0.0 --port ${PORT:-5000}"]
+# Start LibreTranslate with dynamic port
+CMD ["bash", "-c", "libretranslate --host $LT_HOST --port $PORT"]
